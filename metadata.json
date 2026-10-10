@@ -1,0 +1,6 @@
+{
+  "uuid": "palimpsest@knap43.github.io",
+  "name": "Palimpsest Relay",
+  "description": "Forwards clipboard changes to the Palimpsest clipboard history app.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"]
+}
