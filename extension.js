@@ -55,11 +55,16 @@ export default class PalimpsestRelay extends Extension {
                 Main.activateWindow(win);
         });
 
-        this._keyboard = Clutter.get_default_backend().get_default_seat()
-            .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        // Pasting is optional: if any of it fails, capture and focus keep working.
+        this._keyboard = null;
         this._pasteId = 0;
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(RELAY_XML, this);
-        this._dbus.export(Gio.DBus.session, RELAY_PATH);
+        try {
+            this._dbus = Gio.DBusExportedObject.wrapJSObject(RELAY_XML, this);
+            this._dbus.export(Gio.DBus.session, RELAY_PATH);
+        } catch (e) {
+            this._dbus = null;
+            console.warn(`Palimpsest Relay: paste unavailable: ${e.message}`);
+        }
     }
 
     disable() {
@@ -104,7 +109,25 @@ export default class PalimpsestRelay extends Extension {
         this._pasteId = 0;
     }
 
+    _virtualKeyboard() {
+        if (!this._keyboard) {
+            const backend = global.stage.context?.get_backend?.() ?? Clutter.get_default_backend();
+            this._keyboard = backend.get_default_seat()
+                .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        }
+        return this._keyboard;
+    }
+
     _pressPaste(win) {
+        try {
+            this._sendPaste(win);
+        } catch (e) {
+            console.warn(`Palimpsest Relay: paste failed: ${e.message}`);
+        }
+    }
+
+    _sendPaste(win) {
+        const keyboard = this._virtualKeyboard();
         const ids = [win?.get_wm_class(), win?.get_gtk_application_id()];
         const terminal = ids.some(id => id && TERMINALS.has(id.toLowerCase()));
         const keys = terminal
@@ -112,9 +135,9 @@ export default class PalimpsestRelay extends Extension {
             : [Clutter.KEY_Control_L, Clutter.KEY_v];
         const time = GLib.get_monotonic_time();
         for (const key of keys)
-            this._keyboard.notify_keyval(time, key, Clutter.KeyState.PRESSED);
+            keyboard.notify_keyval(time, key, Clutter.KeyState.PRESSED);
         for (const key of keys.reverse())
-            this._keyboard.notify_keyval(time, key, Clutter.KeyState.RELEASED);
+            keyboard.notify_keyval(time, key, Clutter.KeyState.RELEASED);
     }
 
     _capture() {

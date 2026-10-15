@@ -53,6 +53,11 @@ EOF
 gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
     --method org.freedesktop.DBus.ReloadConfig &>/dev/null || true
 
+# Stop a running instance so the next copy or shortcut starts the new version.
+if pkill -f "$bin/palimpsest"; then
+    echo "Restarted the running Palimpsest."
+fi
+
 # Enable the extension (takes effect after the next login on Wayland).
 python3 - "$UUID" <<'PY'
 import sys

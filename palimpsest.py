@@ -265,8 +265,9 @@ class Window(Adw.ApplicationWindow):
         actions.append("Quit", "app.quit")
         menu.append_section(None, actions)
         header = Adw.HeaderBar(title_widget=self.search)
-        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
-                                       tooltip_text="Menu"))
+        self.menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
+                                          tooltip_text="Menu")
+        header.pack_end(self.menu_button)
 
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE,
                                    css_classes=["navigation-sidebar"])
@@ -448,8 +449,16 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def _on_active_changed(self, *_):
-        if not self.is_active() and self.get_visible() and self.get_visible_dialog() is None:
+        # Opening the menu can briefly deactivate the window, so wait a moment and
+        # only hide if focus really went to another app.
+        if not self.is_active() and self.get_visible():
+            GLib.timeout_add(150, self._hide_if_blurred)
+
+    def _hide_if_blurred(self):
+        if (not self.is_active() and self.get_visible()
+                and self.get_visible_dialog() is None and not self.menu_button.get_active()):
             self.set_visible(False)
+        return GLib.SOURCE_REMOVE
 
 
 class App(Adw.Application):
