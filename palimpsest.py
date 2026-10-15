@@ -4,9 +4,13 @@
 Copies are captured by the companion GNOME Shell extension, which forwards each
 one to this app's `push` action over D-Bus. Running `palimpsest` toggles the
 window; bind that command to a key combination in GNOME Settings.
+
+Enter copies the selected entry. With "Paste After Copying" on, the app then
+asks the extension to paste it into the window that had focus before.
 """
 
 import hashlib
+import json
 import sqlite3
 import sys
 import time
@@ -23,6 +27,12 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango  # noqa: E4
 
 APP_ID = "io.github.knap43.Palimpsest"
 DATA_DIR = Path(GLib.get_user_data_dir()) / "palimpsest"
+CONFIG_FILE = Path(GLib.get_user_config_dir()) / "palimpsest" / "settings.json"
+DEFAULTS = {"paste-after-copy": False}
+
+SHELL_NAME = "org.gnome.Shell"  # the extension's object lives on the shell's connection
+RELAY_PATH = "/io/github/knap43/Palimpsest/Relay"
+RELAY_IFACE = "io.github.knap43.PalimpsestRelay"
 MAX_ENTRIES = 500  # unpinned entries kept; pinned ones are never pruned
 THUMB = 96
 
@@ -93,6 +103,27 @@ class History:
 
     def clear_unpinned(self):
         self._exec("DELETE FROM entries WHERE pinned=0")
+
+
+class Settings:
+    def __init__(self, path: Path):
+        self.path = path
+        self.values = dict(DEFAULTS)
+        try:
+            stored = json.loads(path.read_text())
+            self.values.update({k: v for k, v in stored.items() if k in DEFAULTS})
+        except (OSError, ValueError):
+            pass
+
+    def __getitem__(self, key):
+        return self.values[key]
+
+    def __setitem__(self, key, value):
+        self.values[key] = value
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.values, indent=2) + "\n")
+        tmp.replace(self.path)
 
 
 # ── clipboard payloads ───────────────────────────────────────────────────────
@@ -226,8 +257,13 @@ class Window(Adw.ApplicationWindow):
         self.search.connect("activate", self._on_search_activate)
 
         menu = Gio.Menu()
-        menu.append("Clear Unpinned", "win.clear")
-        menu.append("Quit", "app.quit")
+        options = Gio.Menu()
+        options.append("Paste After Copying", "app.paste-after-copy")
+        menu.append_section(None, options)
+        actions = Gio.Menu()
+        actions.append("Clear Unpinned", "win.clear")
+        actions.append("Quit", "app.quit")
+        menu.append_section(None, actions)
         header = Adw.HeaderBar(title_widget=self.search)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
                                        tooltip_text="Menu"))
@@ -333,8 +369,10 @@ class Window(Adw.ApplicationWindow):
     # actions
 
     def _on_row_activated(self, _listbox, row):
-        self.app.restore(row.entry_id)
+        copied = self.app.restore(row.entry_id)
         self.set_visible(False)
+        if copied and self.app.settings["paste-after-copy"]:
+            self.app.paste()
 
     def on_pin(self, button, row):
         self.app.history.set_pinned(row.entry_id, button.get_active())
@@ -416,12 +454,19 @@ class App(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.history = None
+        self.settings = None
         self.window = None
 
     def do_startup(self):
         Adw.Application.do_startup(self)
         self.hold()  # live on in the background to receive pushes
         self.history = History(DATA_DIR / "history.db")
+        self.settings = Settings(CONFIG_FILE)
+
+        paste = Gio.SimpleAction.new_stateful(
+            "paste-after-copy", None, GLib.Variant.new_boolean(self.settings["paste-after-copy"]))
+        paste.connect("change-state", self._on_paste_toggled)
+        self.add_action(paste)
 
         push = Gio.SimpleAction.new("push", GLib.VariantType.new("(ssay)"))
         push.connect("activate", self._on_push)
@@ -440,6 +485,10 @@ class App(Adw.Application):
         else:
             self.window.summon()
 
+    def _on_paste_toggled(self, action, state):
+        action.set_state(state)
+        self.settings["paste-after-copy"] = state.get_boolean()
+
     def _on_push(self, _action, param):
         kind = param.get_child_value(0).unpack()
         mime = param.get_child_value(1).unpack()
@@ -457,7 +506,7 @@ class App(Adw.Application):
     def restore(self, entry_id):
         row = self.history.get(entry_id)
         if row is None:
-            return
+            return False
         kind, _mime, data = row
         clipboard = Gdk.Display.get_default().get_clipboard()
         try:
@@ -470,10 +519,24 @@ class App(Adw.Application):
         except GLib.Error as err:
             print(f"palimpsest: could not restore entry {entry_id}: {err.message}",
                   file=sys.stderr)
-            return
+            return False
         self.history.touch(entry_id)
         if self.window is not None:
             self.window.dirty = True
+        return True
+
+    def paste(self):
+        """Ask the extension to paste into whichever window regains focus."""
+        def done(conn, res):
+            try:
+                conn.call_finish(res)
+            except GLib.Error as err:
+                print(f"palimpsest: could not paste (is the extension up to date?): "
+                      f"{err.message}", file=sys.stderr)
+
+        self.get_dbus_connection().call(
+            SHELL_NAME, RELAY_PATH, RELAY_IFACE, "Paste", None, None,
+            Gio.DBusCallFlags.NONE, 2000, None, done)
 
 
 if __name__ == "__main__":

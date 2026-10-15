@@ -10,6 +10,8 @@ On Wayland, background apps cannot see the clipboard, so a small GNOME Shell ext
 
 Entries that password managers mark as secret are never recorded.
 
+Pasting works the same way in reverse: Wayland apps cannot type into other windows, so after copying, Palimpsest asks the extension to press Ctrl+V (Ctrl+Shift+V in terminals) once focus returns to the window you came from.
+
 ## Install
 
 ```sh
@@ -29,11 +31,13 @@ Then:
 | --- | --- |
 | Your shortcut | Show or hide the window |
 | Type | Search |
-| Enter | Copy the selected entry and close |
+| Enter | Copy the selected entry and close; with **Paste After Copying** on, paste it too |
 | ↑ / ↓ | Move through the list |
 | Delete | Remove the selected entry |
 | Esc | Clear the search, then close |
 | Ctrl+Q | Quit |
+
+**Paste After Copying** is a toggle in the menu, off by default and saved in `~/.config/palimpsest/settings.json`. After updating, log out and back in once so the shell picks up the new extension.
 
 Pin an entry to keep it forever. Otherwise the 500 most recent entries are kept. **Clear Unpinned** in the menu empties the rest.
 
