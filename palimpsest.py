@@ -23,7 +23,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 APP_ID = "io.github.knap43.Palimpsest"
 DATA_DIR = Path(GLib.get_user_data_dir()) / "palimpsest"
@@ -362,7 +362,9 @@ class Window(Adw.ApplicationWindow):
         self._settle()
 
     def _on_search_activate(self, _entry):
-        row = self.listbox.get_selected_row() or next(self._visible_rows(), None)
+        row = self.listbox.get_selected_row()
+        if row is None or not self._matches(row):  # the selection may be filtered out
+            row = next(self._visible_rows(), None)
         if row:
             self._on_row_activated(self.listbox, row)
 
@@ -510,10 +512,15 @@ class App(Adw.Application):
         kind, _mime, data = row
         clipboard = Gdk.Display.get_default().get_clipboard()
         try:
+            # PyGObject exposes neither Gdk.Clipboard.set_text nor set_texture,
+            # so everything goes through a content provider.
             if kind == "text":
-                clipboard.set_text(data.decode("utf-8", "replace"))
+                clipboard.set_content(Gdk.ContentProvider.new_for_value(
+                    data.decode("utf-8", "replace")))
             elif kind == "image":
-                clipboard.set_texture(Gdk.Texture.new_from_bytes(GLib.Bytes.new(data)))
+                texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(data))
+                clipboard.set_content(Gdk.ContentProvider.new_for_value(
+                    GObject.Value(Gdk.Texture, texture)))
             elif kind == "files":
                 clipboard.set_content(files_provider(data.decode().split("\n")))
         except GLib.Error as err:
